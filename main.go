@@ -1,113 +1,71 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
 	"os"
 	"strconv"
-	"time"
 
-	"github.com/oskoss/mi-casa/dyson"
-	"github.com/oskoss/mi-casa/tasmoto"
+	"github.com/oskoss/mi-casa/api"
+	"github.com/oskoss/mi-casa/home"
+	log "github.com/sirupsen/logrus"
 )
 
 func main() {
+	configureLogging()
+	//TODO Enable Config Setting via YAML
+	//TODO Move config to separate function
 	defaultDesiredTemp := 72.0
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+		log.WithFields(log.Fields{
+			"port": port,
+		}).Printf("Web port not provided, using default port")
+	}
 	dysonEmail := os.Getenv("DYSON_API_EMAIL")
 	dysonPassword := os.Getenv("DYSON_API_PASSWORD")
 	dysonSerial := os.Getenv("DYSON_SERIAL_NUM")
 	dysonIP := os.Getenv("DYSON_IP")
-	myDyson := dyson.HotCoolLink{
-		IP:               dysonIP,
-		Port:             "1883",
-		Serial:           dysonSerial,
-		DysonAPIEmail:    dysonEmail,
-		DysonAPIPassword: dysonPassword,
-	}
-	err := myDyson.MonitorClimate()
-	if err != nil {
-		panic(err)
-	}
-
-	var HVAC tasmoto.Switch
 	userSetOverrideTimeString := os.Getenv("MANUAL_OVERRIDE_TIME_MINS")
 	if userSetOverrideTimeString == "" {
 		userSetOverrideTimeString = "60"
-		fmt.Printf("MANUAL_OVERRIDE_TIME_MINS not set in env - Using default value of \"%s\"\n", userSetOverrideTimeString)
+		log.WithFields(log.Fields{
+			"userSetOverrideTimeString": userSetOverrideTimeString,
+		}).Printf("MANUAL_OVERRIDE_TIME_MINS not provided, using default value")
 	}
 	userSetOverrideTime, err := strconv.ParseFloat(userSetOverrideTimeString, 64)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	HVAC.OverrideTimeLength = userSetOverrideTime
-	currentStatus, err := HVAC.CurrentStatus()
-	if err != nil {
-		panic(err)
+	tasmoto1 := os.Getenv("TASMOTO_URI1")
+	if tasmoto1 == "" {
+		tasmoto1 = "office-closet.oskoss.com"
+		log.WithFields(log.Fields{
+			"tasmoto1": tasmoto1,
+		}).Printf("TASMOTO_URI1 not provided, using default value")
 	}
-	HVAC.AutomationStatus = *currentStatus
-	HVAC.ManualOverride = false
 
-	errChan := make(chan error)
-	tempChan := make(chan float64)
-	go ensureTemperature(&HVAC, &myDyson, errChan, tempChan)
-	tempChan <- defaultDesiredTemp
+	log.WithFields(log.Fields{
+		"dysonIP":                   dysonIP,
+		"dysonSerial":               dysonSerial,
+		"dysonPassword":             "*****",
+		"dysonEmail":                dysonEmail,
+		"port":                      port,
+		"userSetOverrideTimeString": userSetOverrideTimeString,
+		"tasmoto1":                  tasmoto1,
+	}).Printf("Configuration Successfully Applied")
 
-	for {
-		setTempErr := <-errChan
-		fmt.Printf("Error occured when setting temperature: %s", setTempErr.Error())
-	}
+	var myHome home.Home
+	var temperatureChannel chan float64
+	myHome.TemperatureChannel = temperatureChannel
+	myHome.AddHotCoolLink(dysonIP, dysonSerial, dysonEmail, dysonPassword)
+	myHome.AddTasmoto(userSetOverrideTime, tasmoto1)
+	go myHome.Monitor()
+	temperatureChannel <- defaultDesiredTemp
+	api.Start(port, &myHome) // Blocking
 }
 
-func ensureTemperature(HVAC *tasmoto.Switch, homeSensor *dyson.HotCoolLink, errorChan chan error, tempChan chan float64) {
-	tempPadding := 2.0
-	desiredTemp := <-tempChan
-	for {
-		select {
-		case newTemp := <-tempChan:
-			fmt.Printf("recieved new desired temperature: %f", newTemp)
-			desiredTemp = newTemp
-		default:
-			err := HVAC.CheckManualOverride()
-			if err != nil {
-				errorChan <- err
-			}
-			if !HVAC.ManualOverride && homeSensor.ClimateStatus.Data.Tact != "" {
-				curTemp, err := strconv.ParseFloat(homeSensor.ClimateStatus.Data.Tact, 64)
-				if err != nil {
-					errorChan <- err
-				}
-				curTemp = (curTemp/10-273.15)*9/5 + 32
-				fmt.Println("\ncurTemp")
-				fmt.Println(curTemp)
-				var HVACStatus *tasmoto.Status
-				HVACStatus, err = HVAC.CurrentStatus()
-				if err != nil {
-					errorChan <- err
-					HVACStatus.POWER3 = "OFF"
-				}
-				if (curTemp >= desiredTemp+tempPadding) && (HVACStatus.POWER3 != "ON") {
-					timeout := time.Duration(5 * time.Second)
-					client := &http.Client{
-						Timeout: timeout,
-					}
-					_, err := client.Get("http://office-closet.oskoss.com/cm?cmnd=Power3%20On")
-					if err != nil {
-						errorChan <- err
-					}
-				} else if curTemp <= desiredTemp-tempPadding {
-					timeout := time.Duration(5 * time.Second)
-					client := &http.Client{
-						Timeout: timeout,
-					}
-					_, err := client.Get("http://office-closet.oskoss.com/cm?cmnd=Power3%20Off")
-					if err != nil {
-						errorChan <- err
-					}
-				}
-
-			} else {
-				time.Sleep(30 * time.Second)
-			}
-		}
-	}
+func configureLogging() {
+	log.SetFormatter(&log.TextFormatter{})
+	log.SetReportCaller(true)
+	log.SetLevel(log.DebugLevel)
 }

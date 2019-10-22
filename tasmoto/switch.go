@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 func (h *Switch) CurrentStatus() (*Status, error) {
@@ -16,7 +18,9 @@ func (h *Switch) CurrentStatus() (*Status, error) {
 	checkAgainTime := time.Now().Add(time.Duration(-30) * time.Second)
 	checkAgain := lastCheckedTime.Before(checkAgainTime)
 	if err != nil || checkAgain {
-		fmt.Println("Checking Sonoff Device...")
+		log.WithFields(log.Fields{
+			"switch": h,
+		}).Debugf("check switch status")
 		timeout := time.Duration(5 * time.Second)
 		client := http.Client{
 			Timeout: timeout,
@@ -84,6 +88,7 @@ type Switch struct {
 	ManualOverride      bool
 	ManualOverrideStart time.Time
 	OverrideTimeLength  float64
+	URI                 string
 }
 
 type Status struct {

@@ -16,7 +16,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-func (device *HotCoolLink) MonitorClimate() error {
+func (device *HotCoolLink) Connect() error {
 	if device.DysonAPIEmail == "" {
 		return fmt.Errorf("HotCoolLink device DysonAPIEmail not set")
 	}
@@ -35,25 +35,69 @@ func (device *HotCoolLink) MonitorClimate() error {
 
 	err := device.addDysonIntermediateCredentials()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	err = device.addDysonAPIInfo()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	client, err := device.Connect()
+	client, err := device.connectToDevice()
 	if err != nil {
-		panic(err)
+		return err
 	}
+	device.MQTT = client
+	return nil
+}
 
+func (device *HotCoolLink) MonitorTemp() {
 	listenTopic := fmt.Sprintf("%s/%s/status/current", device.DysonAPIInfo.ProductType, device.DysonAPIInfo.Serial)
 	stateTopic := fmt.Sprintf("%s/%s/command", device.DysonAPIInfo.ProductType, device.DysonAPIInfo.Serial)
-	go device.listenAndUpdate(client, listenTopic)
-	go device.getState(client, stateTopic)
+	go device.listenAndUpdate(device.MQTT, listenTopic)
+	go device.getState(device.MQTT, stateTopic)
+}
 
-	return err
+type HotCoolLink struct {
+	IP                           string
+	Port                         string
+	Serial                       string
+	DysonAPIEmail                string
+	DysonAPIPassword             string
+	DecryptedDevicePassword      string
+	DysonIntermediateCredentials Auth
+	DysonAPIInfo                 Device
+	ClimateStatus                Status
+	MQTT                         mqtt.Client
+}
+
+type Auth struct {
+	Account  string `json:"Account"`
+	Password string `json:"Password"`
+}
+
+type Device struct {
+	Active              bool   `json:"Active"`
+	Serial              string `json:"Serial"`
+	Name                string `json:"Name"`
+	ScaleUnit           string `json:"ScaleUnit"`
+	Version             string `json:"Version"`
+	LocalCredentials    string `json:"LocalCredentials"`
+	AutoUpdate          bool   `json:"AutoUpdate"`
+	NewVersionAvailable bool   `json:"NewVersionAvailable"`
+	ProductType         string `json:"ProductType"`
+}
+
+type Status struct {
+	Msg  string    `json:"msg"`
+	Time time.Time `json:"time"`
+	Data struct {
+		Tact string `json:"tact"`
+		Hact string `json:"hact"`
+		Pact string `json:"pact"`
+		Vact string `json:"vact"`
+		Sltm string `json:"sltm"`
+	} `json:"data"`
 }
 
 func (device *HotCoolLink) getState(client mqtt.Client, topic string) {
@@ -68,14 +112,14 @@ func (device *HotCoolLink) listenAndUpdate(client mqtt.Client, topic string) {
 		var currentStatus Status
 		message := msg.Payload()
 		if err := json.Unmarshal(message, &currentStatus); err != nil {
-			fmt.Printf("CurrentStatus %+v recieved from HotCoolLink %s is malformed", message, device.DysonAPIInfo.Serial)
+			fmt.Printf("CurrentStatus %+v received from HotCoolLink %s is malformed", message, device.DysonAPIInfo.Serial)
 		} else {
 			device.ClimateStatus = currentStatus
 		}
 	})
 }
 
-func (device *HotCoolLink) Connect() (mqtt.Client, error) {
+func (device *HotCoolLink) connectToDevice() (mqtt.Client, error) {
 	if device.DysonAPIInfo.Serial == "" {
 		return nil, fmt.Errorf("device info from Dyson API has not been obtained yet")
 	}
@@ -239,45 +283,4 @@ func unpadByteArray(src []byte) ([]byte, error) {
 	}
 
 	return src[:(length - unpadding)], nil
-}
-
-type HotCoolLink struct {
-	IP                           string
-	Port                         string
-	Serial                       string
-	DysonAPIEmail                string
-	DysonAPIPassword             string
-	DecryptedDevicePassword      string
-	DysonIntermediateCredentials Auth
-	DysonAPIInfo                 Device
-	ClimateStatus                Status
-}
-
-type Auth struct {
-	Account  string `json:"Account"`
-	Password string `json:"Password"`
-}
-
-type Device struct {
-	Active              bool   `json:"Active"`
-	Serial              string `json:"Serial"`
-	Name                string `json:"Name"`
-	ScaleUnit           string `json:"ScaleUnit"`
-	Version             string `json:"Version"`
-	LocalCredentials    string `json:"LocalCredentials"`
-	AutoUpdate          bool   `json:"AutoUpdate"`
-	NewVersionAvailable bool   `json:"NewVersionAvailable"`
-	ProductType         string `json:"ProductType"`
-}
-
-type Status struct {
-	Msg  string    `json:"msg"`
-	Time time.Time `json:"time"`
-	Data struct {
-		Tact string `json:"tact"`
-		Hact string `json:"hact"`
-		Pact string `json:"pact"`
-		Vact string `json:"vact"`
-		Sltm string `json:"sltm"`
-	} `json:"data"`
 }

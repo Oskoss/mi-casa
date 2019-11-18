@@ -2,11 +2,10 @@ package home
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/oskoss/mi-casa/dyson"
 	"github.com/oskoss/mi-casa/tasmoto"
+	"github.com/oskoss/mi-casa/thermostat"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -19,7 +18,7 @@ func (myHome *Home) SetTemperature(temperature float64) error {
 }
 
 func (myHome *Home) AddHotCoolLink(dysonIP, dysonSerial, dysonEmail, dysonPassword string) error {
-	myHotCoolLink := dyson.HotCoolLink{
+	myHotCoolLink := thermostat.DysonHotCoolLink{
 		IP:               dysonIP,
 		Port:             "1883",
 		Serial:           dysonSerial,
@@ -31,13 +30,13 @@ func (myHome *Home) AddHotCoolLink(dysonIP, dysonSerial, dysonEmail, dysonPasswo
 	if err != nil {
 		return err
 	}
-	myHome.HotCool = myHotCoolLink
+	myHome.HotCool = &myHotCoolLink
 	log.WithFields(log.Fields{
-		"dysonIP":       myHome.HotCool.IP,
-		"dysonPort":     myHome.HotCool.Port,
-		"dysonSerial":   myHome.HotCool.Serial,
+		"dysonIP":       dysonIP,
+		"dysonPort":     "1883",
+		"dysonSerial":   dysonSerial,
 		"dysonPassword": "******",
-		"dysonEmail":    myHome.HotCool.DysonAPIEmail,
+		"dysonEmail":    dysonEmail,
 	}).Printf("new Dyson Hot Cold Link added")
 	return nil
 }
@@ -62,10 +61,8 @@ func (myHome *Home) AddTasmoto(OverrideTimeLength float64, URI string) error {
 
 func (myHome *Home) Monitor() error {
 
-	myHome.HotCool.MonitorTemp()
-
 	errChan := make(chan error)
-	go ensureTemperature(&myHome.HVACSwitch, &myHome.HotCool, errChan, myHome.TemperatureChannel)
+	go ensureTemperature(&myHome.HVACSwitch, myHome.HotCool, errChan, myHome.TemperatureChannel)
 	for {
 		setTempErr := <-errChan
 		log.WithFields(log.Fields{
@@ -74,7 +71,7 @@ func (myHome *Home) Monitor() error {
 	}
 }
 
-func ensureTemperature(allHVAC *[]tasmoto.Switch, homeSensor *dyson.HotCoolLink, errorChan chan error, tempChan chan float64) {
+func ensureTemperature(allHVAC *[]tasmoto.Switch, homeSensor thermostat.ThermostatDevice, errorChan chan error, tempChan chan float64) {
 	tempPadding := 2.0
 	desiredTemp := <-tempChan
 	for {
@@ -90,22 +87,19 @@ func ensureTemperature(allHVAC *[]tasmoto.Switch, homeSensor *dyson.HotCoolLink,
 				if err != nil {
 					errorChan <- err
 				}
-				if HVAC.ManualOverride && homeSensor.ClimateStatus.Data.Tact != "" {
-					curTemp, err := strconv.ParseFloat(homeSensor.ClimateStatus.Data.Tact, 64)
-					if err != nil {
-						errorChan <- err
-					}
-					curTemp = (curTemp/10-273.15)*9/5 + 32
-					log.WithFields(log.Fields{
-						"curTemp": curTemp,
-					}).Debugf("current temperature")
+				currentTemp, err := homeSensor.CurrentTemp()
+				if err != nil {
+					errorChan <- err
+				}
+				if HVAC.ManualOverride {
+
 					var HVACStatus *tasmoto.Status
 					HVACStatus, err = HVAC.CurrentStatus()
 					if err != nil {
 						errorChan <- err
 						HVACStatus.POWER3 = "OFF"
 					}
-					if (curTemp >= desiredTemp+tempPadding) && (HVACStatus.POWER3 != "ON") {
+					if (*currentTemp >= desiredTemp+tempPadding) && (HVACStatus.POWER3 != "ON") {
 						timeout := time.Duration(5 * time.Second)
 						client := &http.Client{
 							Timeout: timeout,
@@ -115,7 +109,7 @@ func ensureTemperature(allHVAC *[]tasmoto.Switch, homeSensor *dyson.HotCoolLink,
 						if err != nil {
 							errorChan <- err
 						}
-					} else if curTemp <= desiredTemp-tempPadding {
+					} else if *currentTemp <= desiredTemp-tempPadding {
 						timeout := time.Duration(5 * time.Second)
 						client := &http.Client{
 							Timeout: timeout,
@@ -136,7 +130,7 @@ func ensureTemperature(allHVAC *[]tasmoto.Switch, homeSensor *dyson.HotCoolLink,
 }
 
 type Home struct {
-	HotCool            dyson.HotCoolLink
+	HotCool            thermostat.ThermostatDevice
 	HVACSwitch         []tasmoto.Switch
 	TemperatureChannel chan float64
 }

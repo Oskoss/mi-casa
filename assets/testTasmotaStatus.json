@@ -1,0 +1,20 @@
+{
+    "Time": "2019-12-01T17:17:07",
+    "Uptime": "221T23:08:11",
+    "Vcc": 3.252,
+    "SleepMode": "Dynamic",
+    "Sleep": 50,
+    "LoadAvg": 31,
+    "POWER1": "OFF",
+    "POWER2": "RANDOM",
+    "POWER3": "ON",
+    "Wifi": {
+        "AP": 1,
+        "SSId": "Abraham Linksys",
+        "BSSId": "60:38:E0:0D:78:B0",
+        "Channel": 6,
+        "RSSI": 92,
+        "LinkCount": 11,
+        "Downtime": "0T09:13:33"
+    }
+}

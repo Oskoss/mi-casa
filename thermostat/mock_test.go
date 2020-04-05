@@ -4,7 +4,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	. "github.com/mi-casa/thermostat"
+	. "github.com/oskoss/mi-casa/thermostat"
 )
 
 var _ = Describe("Mock", func() {

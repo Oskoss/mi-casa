@@ -4,4 +4,6 @@ package switcher
 // but able to be in any number of states the implementations require
 type SwitchDevice interface {
 	CurrentStatus() (status *string, err error)
+	TurnOn() (err error)
+	TurnOff() (err error)
 }

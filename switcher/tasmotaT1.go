@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -111,6 +112,124 @@ func (t *TasmotaT1) UpdateStatus() (*string, error) {
 		"data last retrieved": t.PhysicalDevice.Time,
 	}).Warn("Using cached data from Tasmota")
 	return &t.CurrentStatus, nil
+}
+
+//TurnOn attempts to turn the switch "ON"
+//If in manualoverride state no changes will occur
+//AutomationStatus for switch will always be updated to "ON"
+func (t *TasmotaT1) TurnOn() error {
+	_, err := t.UpdateStatus()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to update status before turning on")
+		return err
+	}
+
+	//change of AutomationStatus must be after update to ensure we dont end up in override state
+	t.AutomationStatus = "ON"
+	if t.ManualOverrideStatus {
+		log.WithFields(log.Fields{
+			"t.ManualOverrideStatus": t.ManualOverrideStatus,
+		}).Warn("attempt to turn on when in override state")
+		return nil
+	}
+	timeout := time.Duration(5 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
+	}
+	resp, err := client.Get(fmt.Sprintf("%s/cm?cmnd=POWER%d%%20ON", t.URI, t.SwitchNumber))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var switchStatusResp map[string]string
+	err = json.Unmarshal(respBytes, &switchStatusResp)
+	if err != nil {
+		return err
+	}
+	if status, ok := switchStatusResp["POWER"+strconv.Itoa(t.SwitchNumber)]; ok {
+		if status != "ON" {
+			errorString := fmt.Sprintf("switch %d not reporting as ON after requesting to be ON", t.SwitchNumber)
+			log.WithFields(log.Fields{
+				"switchStatusResp": switchStatusResp,
+				"switchNumber":     t.SwitchNumber,
+			}).Error(errorString)
+			return fmt.Errorf(errorString)
+		}
+	} else {
+		errorString := fmt.Sprintf("switch %d not reporting back after requesting to be ON", t.SwitchNumber)
+		log.WithFields(log.Fields{
+			"switchStatusResp": switchStatusResp,
+			"switchNumber":     t.SwitchNumber,
+		}).Error(errorString)
+		return fmt.Errorf(errorString)
+	}
+	return nil
+}
+
+//TurnOff attempts to turn the switch "OFF"
+//If in manualoverride state no changes will occur
+//AutomationStatus for switch will always be updated to "OFF"
+func (t *TasmotaT1) TurnOff() error {
+
+	_, err := t.UpdateStatus()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("failed to update status before turning off")
+		return err
+	}
+
+	//change of AutomationStatus must be after update to ensure we dont end up in override state
+	t.AutomationStatus = "OFF"
+
+	if t.ManualOverrideStatus {
+		log.WithFields(log.Fields{
+			"t.ManualOverrideStatus": t.ManualOverrideStatus,
+		}).Warn("attempt to turn off when in override state")
+		return nil
+	}
+	timeout := time.Duration(5 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
+	}
+	resp, err := client.Get(fmt.Sprintf("%s/cm?cmnd=POWER%d%%20OFF", t.URI, t.SwitchNumber))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var switchStatusResp map[string]string
+	err = json.Unmarshal(respBytes, &switchStatusResp)
+	if err != nil {
+		return err
+	}
+	if status, ok := switchStatusResp["POWER"+strconv.Itoa(t.SwitchNumber)]; ok {
+		if status != "OFF" {
+			errorString := fmt.Sprintf("switch %d not reporting as OFF after requesting to be OFF", t.SwitchNumber)
+			log.WithFields(log.Fields{
+				"switchStatusResp": switchStatusResp,
+				"switchNumber":     t.SwitchNumber,
+			}).Error(errorString)
+			return fmt.Errorf(errorString)
+		}
+	} else {
+		errorString := fmt.Sprintf("switch %d not reporting back after requesting to be OFF", t.SwitchNumber)
+		log.WithFields(log.Fields{
+			"switchStatusResp": switchStatusResp,
+			"switchNumber":     t.SwitchNumber,
+		}).Error(errorString)
+		return fmt.Errorf(errorString)
+	}
+	return nil
 }
 
 func (t *TasmotaT1) checkManualOverride() {

@@ -1,6 +1,7 @@
 package switcher_test
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -183,6 +184,294 @@ var _ = Describe("Tasmota", func() {
 						_, err := myTasmota.UpdateStatus()
 						Expect(err).ShouldNot(HaveOccurred())
 						Expect(myTasmota.ManualOverrideStartTime).Should(BeTemporally("~", time.Now(), time.Duration(5)*time.Second))
+					})
+				})
+			})
+		})
+	})
+	Describe("TurnON", func() {
+		Context("with a valid OFF switch object", func() {
+			var (
+				myTasmota TasmotaT1
+				err       error
+			)
+			BeforeEach(func() {
+				switchStatusBytes, err := ioutil.ReadFile("../assets/testTasmotaStatus.json")
+				Expect(err).Should(BeNil())
+				err = json.Unmarshal(switchStatusBytes, &myTasmota.PhysicalDevice)
+				Expect(err).Should(BeNil())
+				myTasmota.SwitchNumber = 1
+				myTasmota.AutomationStatus = "OFF"
+				myTasmota.UpdateWindow = time.Duration(5) * time.Second
+			})
+			Context("when not in manual override", func() {
+				BeforeEach(func() {
+					myTasmota.ManualOverrideStatus = false
+				})
+				Context("with a valid physical switch webserver", func() {
+					var server *ghttp.Server
+					BeforeEach(func() {
+						server = ghttp.NewServer()
+						myTasmota.URI = server.URL()
+
+					})
+					AfterEach(func() {
+						server.Close()
+					})
+					Context("when in the OFF state", func() {
+						var (
+							switchOnStatus       map[string]interface{}
+							switchOffStatus      map[string]interface{}
+							switchStatusBytes    []byte
+							switchOnStatusBytes  []byte
+							switchOffStatusBytes []byte
+						)
+						BeforeEach(func() {
+							switchStatusBytes, err = ioutil.ReadFile("../assets/testTasmotaStatus.json")
+							Expect(err).Should(BeNil())
+							err = json.Unmarshal(switchStatusBytes, &switchOnStatus)
+							Expect(err).Should(BeNil())
+							switchOnStatus["POWER1"] = "ON"
+							switchOnStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+							err = json.Unmarshal(switchStatusBytes, &switchOffStatus)
+							Expect(err).Should(BeNil())
+							switchOffStatus["POWER1"] = "OFF"
+							switchOnStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+
+							switchOnStatusBytes, err = json.Marshal(switchOnStatus)
+							Expect(err).Should(BeNil())
+							switchOffStatusBytes, err = json.Marshal(switchOffStatus)
+							Expect(err).Should(BeNil())
+							server.AppendHandlers(
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOffStatusBytes),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=POWER1%20ON"),
+									ghttp.RespondWith(http.StatusOK, `{"POWER1": "ON"}`),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOnStatusBytes),
+								),
+							)
+						})
+						It("should turn the switch ON", func() {
+							err := myTasmota.TurnOn()
+							Expect(err).ShouldNot(HaveOccurred())
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.PhysicalDevice.POWER1).Should(BeEquivalentTo("OFF"))
+							_, err = myTasmota.UpdateStatus()
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.PhysicalDevice.POWER3).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.ManualOverrideStatus).Should(BeFalse())
+						})
+					})
+				})
+			})
+			Context("when in manual override", func() {
+				BeforeEach(func() {
+					myTasmota.ManualOverrideStatus = true
+					myTasmota.ManualOverrideTimeLength = time.Duration(5) * time.Minute
+					myTasmota.ManualOverrideStartTime = time.Now()
+				})
+				Context("with a valid physical switch webserver", func() {
+					var server *ghttp.Server
+					BeforeEach(func() {
+						server = ghttp.NewServer()
+						myTasmota.URI = server.URL()
+
+					})
+					AfterEach(func() {
+						server.Close()
+					})
+					Context("when in the OFF state", func() {
+						var (
+							switchStatusBytes    []byte
+							switchOffStatus      map[string]interface{}
+							switchOffStatusBytes []byte
+						)
+						BeforeEach(func() {
+							switchStatusBytes, err = ioutil.ReadFile("../assets/testTasmotaStatus.json")
+							Expect(err).Should(BeNil())
+							err = json.Unmarshal(switchStatusBytes, &switchOffStatus)
+							Expect(err).Should(BeNil())
+							switchOffStatus["POWER1"] = "OFF"
+							switchOffStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+							switchOffStatusBytes, err = json.Marshal(switchOffStatus)
+							Expect(err).Should(BeNil())
+
+							server.AppendHandlers(
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOffStatusBytes),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOffStatusBytes),
+								),
+							)
+						})
+						It("should NOT turn the switch ON", func() {
+							err := myTasmota.TurnOn()
+							Expect(err).ShouldNot(HaveOccurred())
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.PhysicalDevice.POWER1).Should(BeEquivalentTo("OFF"))
+							_, err = myTasmota.UpdateStatus()
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.PhysicalDevice.POWER1).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.ManualOverrideStatus).Should(BeTrue())
+						})
+					})
+				})
+			})
+		})
+	})
+	Describe("TurnOff", func() {
+		Context("with a valid ON switch object", func() {
+			var (
+				myTasmota TasmotaT1
+				err       error
+			)
+			BeforeEach(func() {
+				switchStatusBytes, err := ioutil.ReadFile("../assets/testTasmotaStatus.json")
+				Expect(err).Should(BeNil())
+				err = json.Unmarshal(switchStatusBytes, &myTasmota.PhysicalDevice)
+				Expect(err).Should(BeNil())
+				myTasmota.SwitchNumber = 3
+				myTasmota.AutomationStatus = "ON"
+				myTasmota.UpdateWindow = time.Duration(5) * time.Second
+			})
+			Context("when not in manual override", func() {
+				BeforeEach(func() {
+					myTasmota.ManualOverrideStatus = false
+				})
+				Context("with a valid physical switch webserver", func() {
+					var server *ghttp.Server
+					BeforeEach(func() {
+						server = ghttp.NewServer()
+						myTasmota.URI = server.URL()
+
+					})
+					AfterEach(func() {
+						server.Close()
+					})
+					Context("when in the ON state", func() {
+						var (
+							switchOnStatus       map[string]interface{}
+							switchOffStatus      map[string]interface{}
+							switchStatusBytes    []byte
+							switchOnStatusBytes  []byte
+							switchOffStatusBytes []byte
+						)
+						BeforeEach(func() {
+							switchStatusBytes, err = ioutil.ReadFile("../assets/testTasmotaStatus.json")
+							Expect(err).Should(BeNil())
+							err = json.Unmarshal(switchStatusBytes, &switchOnStatus)
+							Expect(err).Should(BeNil())
+							switchOnStatus["POWER3"] = "ON"
+							switchOnStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+							err = json.Unmarshal(switchStatusBytes, &switchOffStatus)
+							Expect(err).Should(BeNil())
+							switchOffStatus["POWER3"] = "OFF"
+							switchOnStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+
+							switchOnStatusBytes, err = json.Marshal(switchOnStatus)
+							Expect(err).Should(BeNil())
+							switchOffStatusBytes, err = json.Marshal(switchOffStatus)
+							Expect(err).Should(BeNil())
+							server.AppendHandlers(
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOnStatusBytes),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=POWER3%20OFF"),
+									ghttp.RespondWith(http.StatusOK, `{"POWER3": "OFF"}`),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOffStatusBytes),
+								),
+							)
+						})
+						It("should turn the switch OFF", func() {
+							err := myTasmota.TurnOff()
+							Expect(err).ShouldNot(HaveOccurred())
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.PhysicalDevice.POWER3).Should(BeEquivalentTo("ON"))
+							_, err = myTasmota.UpdateStatus()
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.PhysicalDevice.POWER3).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.ManualOverrideStatus).Should(BeFalse())
+						})
+
+					})
+				})
+			})
+			Context("when in manual override", func() {
+				BeforeEach(func() {
+					myTasmota.ManualOverrideStatus = true
+					myTasmota.ManualOverrideTimeLength = time.Duration(5) * time.Minute
+					myTasmota.ManualOverrideStartTime = time.Now()
+				})
+				Context("with a valid physical switch webserver", func() {
+					var server *ghttp.Server
+					BeforeEach(func() {
+						server = ghttp.NewServer()
+						myTasmota.URI = server.URL()
+
+					})
+					AfterEach(func() {
+						server.Close()
+					})
+					Context("when in the ON state", func() {
+						var (
+							switchOnStatus      map[string]interface{}
+							switchStatusBytes   []byte
+							switchOnStatusBytes []byte
+						)
+						BeforeEach(func() {
+							switchStatusBytes, err = ioutil.ReadFile("../assets/testTasmotaStatus.json")
+							Expect(err).Should(BeNil())
+							err = json.Unmarshal(switchStatusBytes, &switchOnStatus)
+							Expect(err).Should(BeNil())
+							switchOnStatus["POWER3"] = "ON"
+							switchOnStatus["Time"] = time.Now().Format("2006.01.02 15:04:05")
+							switchOnStatusBytes, err = json.Marshal(switchOnStatus)
+							Expect(err).Should(BeNil())
+
+							server.AppendHandlers(
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOnStatusBytes),
+								),
+								ghttp.CombineHandlers(
+									ghttp.VerifyRequest("GET", "/cm", "cmnd=state"),
+									ghttp.RespondWith(http.StatusOK, switchOnStatusBytes),
+								),
+							)
+						})
+						It("should NOT turn the switch OFF", func() {
+							err := myTasmota.TurnOff()
+							Expect(err).ShouldNot(HaveOccurred())
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.PhysicalDevice.POWER3).Should(BeEquivalentTo("ON"))
+							_, err = myTasmota.UpdateStatus()
+							Expect(myTasmota.AutomationStatus).Should(BeEquivalentTo("OFF"))
+							Expect(myTasmota.CurrentStatus).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.PhysicalDevice.POWER3).Should(BeEquivalentTo("ON"))
+							Expect(myTasmota.ManualOverrideStatus).Should(BeTrue())
+						})
+
 					})
 				})
 			})

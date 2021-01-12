@@ -16,15 +16,11 @@ import (
 // a specific switch from the T1 since multiple are present
 // within the device.
 type TasmotaT1 struct {
-	SwitchNumber             int
-	URI                      string
-	CurrentStatus            string
-	AutomationStatus         string
-	UpdateWindow             time.Duration
-	PhysicalDevice           TasmotaT1Status
-	ManualOverrideStatus     bool
-	ManualOverrideStartTime  time.Time
-	ManualOverrideTimeLength time.Duration
+	SwitchNumber   int
+	URI            string
+	CurrentStatus  string
+	UpdateWindow   time.Duration
+	PhysicalDevice TasmotaT1Status
 }
 
 //TasmotaT1Status is the JSON payload received from the device directly
@@ -104,7 +100,6 @@ func (t *TasmotaT1) UpdateStatus() (*string, error) {
 			}).Error(errorString)
 			return nil, fmt.Errorf(errorString)
 		}
-		t.checkManualOverride()
 		return &t.CurrentStatus, nil
 	}
 	log.WithFields(log.Fields{
@@ -115,8 +110,6 @@ func (t *TasmotaT1) UpdateStatus() (*string, error) {
 }
 
 //TurnOn attempts to turn the switch "ON"
-//If in manualoverride state no changes will occur
-//AutomationStatus for switch will always be updated to "ON"
 func (t *TasmotaT1) TurnOn() error {
 	_, err := t.UpdateStatus()
 	if err != nil {
@@ -126,14 +119,6 @@ func (t *TasmotaT1) TurnOn() error {
 		return err
 	}
 
-	//change of AutomationStatus must be after update to ensure we dont end up in override state
-	t.AutomationStatus = "ON"
-	if t.ManualOverrideStatus {
-		log.WithFields(log.Fields{
-			"t.ManualOverrideStatus": t.ManualOverrideStatus,
-		}).Warn("attempt to turn on when in override state")
-		return nil
-	}
 	timeout := time.Duration(5 * time.Second)
 	client := http.Client{
 		Timeout: timeout,
@@ -173,8 +158,6 @@ func (t *TasmotaT1) TurnOn() error {
 }
 
 //TurnOff attempts to turn the switch "OFF"
-//If in manualoverride state no changes will occur
-//AutomationStatus for switch will always be updated to "OFF"
 func (t *TasmotaT1) TurnOff() error {
 
 	_, err := t.UpdateStatus()
@@ -185,15 +168,6 @@ func (t *TasmotaT1) TurnOff() error {
 		return err
 	}
 
-	//change of AutomationStatus must be after update to ensure we dont end up in override state
-	t.AutomationStatus = "OFF"
-
-	if t.ManualOverrideStatus {
-		log.WithFields(log.Fields{
-			"t.ManualOverrideStatus": t.ManualOverrideStatus,
-		}).Warn("attempt to turn off when in override state")
-		return nil
-	}
 	timeout := time.Duration(5 * time.Second)
 	client := http.Client{
 		Timeout: timeout,
@@ -230,16 +204,4 @@ func (t *TasmotaT1) TurnOff() error {
 		return fmt.Errorf(errorString)
 	}
 	return nil
-}
-
-func (t *TasmotaT1) checkManualOverride() {
-	if t.ManualOverrideStatus {
-		ManualOverrideEndTime := t.ManualOverrideStartTime.Add(t.ManualOverrideTimeLength)
-		if ManualOverrideEndTime.Before(time.Now()) {
-			t.ManualOverrideStatus = false
-		}
-	} else if t.CurrentStatus != t.AutomationStatus {
-		t.ManualOverrideStatus = true
-		t.ManualOverrideStartTime = time.Now()
-	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/oskoss/mi-casa/config"
@@ -10,12 +11,18 @@ import (
 func main() {
 	configFile := config.YamlConfig{FileLocation: "config.yaml"}
 	micasaConfig, err := configFile.GetAllFields()
-	fmt.Println(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = micasaConfig.DysonHotCoolLink[0].Connect()
-	fmt.Println(err)
-	time.Sleep(30 * time.Second)
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(30 * time.Second) // why?
 	temp, err := micasaConfig.DysonHotCoolLink[0].CurrentTemp()
-	fmt.Println(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	fmt.Println(*temp)
 
 }
